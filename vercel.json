@@ -1,14 +1,5 @@
 {
-  "functions": {
-    "app/api/**/route.ts": {
-      "maxDuration": 300
-    }
-  },
   "env": {
     "NODE_ENV": "production"
-  },
-  "regions": ["cle1"],
-  "github": {
-    "autoAlias": false
   }
 }
