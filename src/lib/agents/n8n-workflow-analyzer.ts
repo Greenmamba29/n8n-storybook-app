@@ -3,7 +3,7 @@
  * Advanced agent for processing N8N workflows and generating educational content
  */
 
-import { Workflow } from 'n8n-workflow';
+// import { Workflow } from 'n8n-workflow'; // Temporarily disabled for build
 import { OpenAI } from 'openai';
 import { abacusClient } from '../../services/abacusClient';
 
@@ -70,7 +70,7 @@ export interface AccessibilityFeatures {
 
 export class N8NWorkflowAnalyzer {
   private openai: OpenAI;
-  private workflow?: Workflow;
+  // private workflow?: Workflow; // Temporarily disabled for build
 
   constructor() {
     this.openai = new OpenAI({
@@ -83,15 +83,15 @@ export class N8NWorkflowAnalyzer {
    */
   async analyzeWorkflow(workflowData: N8NWorkflow): Promise<EducationalContent> {
     try {
-      // Initialize N8N workflow engine
-      this.workflow = new Workflow({
-        nodes: workflowData.nodes,
-        connections: workflowData.connections,
-        active: false,
-        settings: workflowData.settings,
-        id: workflowData.id,
-        name: workflowData.name,
-      });
+      // Initialize N8N workflow engine (temporarily disabled for build)
+      // this.workflow = new Workflow({
+      //   nodes: workflowData.nodes,
+      //   connections: workflowData.connections,
+      //   active: false,
+      //   settings: workflowData.settings,
+      //   id: workflowData.id,
+      //   name: workflowData.name,
+      // });
 
       // Analyze workflow structure
       const workflowAnalysis = await this.performWorkflowAnalysis(workflowData);
