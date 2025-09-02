@@ -7,6 +7,7 @@ import { InteractivePlayer } from '../components/storybook/InteractivePlayer';
 import { n8nIntegrationService } from '../services/n8n-integration';
 import { agentOrchestrator, WorkflowToStorybookRequest } from '../lib/agents/agent-orchestrator';
 import { EducationalContent, N8NWorkflow } from '../lib/agents/n8n-workflow-analyzer';
+import { demoStorybook } from '../data/demo-storybook';
 
 export default function HomePage() {
   // State management
@@ -115,7 +116,7 @@ export default function HomePage() {
       });
 
       orchestrator.on('task:started', ({ task }) => {
-        const stepNames = {
+        const stepNames: Record<string, string> = {
           analyze_workflow: 'Analyzing workflow structure...',
           generate_content: 'Generating educational content...',
           create_video: 'Creating instructional video...',
@@ -139,7 +140,14 @@ export default function HomePage() {
 
     } catch (err) {
       console.error('Storybook generation failed:', err);
-      setError(err instanceof Error ? err.message : 'An unexpected error occurred');
+      const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
+      setError(`${errorMessage}. Loading demo instead...`);
+      
+      // Fallback to demo storybook for testing
+      setTimeout(() => {
+        setGeneratedStorybook(demoStorybook);
+        setError(null);
+      }, 2000);
     } finally {
       setIsProcessing(false);
     }
@@ -395,7 +403,7 @@ export default function HomePage() {
               )}
 
               {/* Generate Button */}
-              <div className="text-center">
+              <div className="text-center space-y-4">
                 <motion.button
                   onClick={generateStorybook}
                   disabled={isProcessing || (!selectedFile && !urlInput)}
@@ -415,6 +423,19 @@ export default function HomePage() {
                     </>
                   )}
                 </motion.button>
+                
+                {/* Demo Button */}
+                <div className="text-center">
+                  <p className="text-sm text-gray-500 mb-2">Or try our interactive demo:</p>
+                  <motion.button
+                    onClick={() => setGeneratedStorybook(demoStorybook)}
+                    disabled={isProcessing}
+                    className="inline-flex items-center px-6 py-2 bg-gray-600 text-white font-medium rounded-lg hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 disabled:opacity-50"
+                    whileHover={{ scale: 1.02 }}
+                  >
+                    🚀 View Demo Storybook
+                  </motion.button>
+                </div>
               </div>
             </motion.div>
           ) : (

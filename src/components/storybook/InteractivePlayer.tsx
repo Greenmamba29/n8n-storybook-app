@@ -5,7 +5,7 @@
  * Main component for displaying and interacting with educational storybooks
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Play, Pause, SkipForward, SkipBack, Volume2, VolumeX, Settings, Eye, EyeOff } from 'lucide-react';
 import { EducationalContent, EducationalStep, InteractiveElement } from '../../lib/agents/n8n-workflow-analyzer';
@@ -94,16 +94,17 @@ export const InteractivePlayer: React.FC<InteractivePlayerProps> = ({
       }
     };
 
-    if (playerRef.current) {
-      playerRef.current.addEventListener('keydown', handleKeyPress);
+    const currentPlayer = playerRef.current;
+    if (currentPlayer) {
+      currentPlayer.addEventListener('keydown', handleKeyPress);
       return () => {
-        playerRef.current?.removeEventListener('keydown', handleKeyPress);
+        currentPlayer.removeEventListener('keydown', handleKeyPress);
       };
     }
-  }, [isPlaying, currentStepIndex]);
+  }, [isPlaying, currentStepIndex, handleNextStep, handlePreviousStep]);
 
   // Step navigation functions
-  const handleNextStep = () => {
+  const handleNextStep = useCallback(() => {
     if (!isLastStep) {
       const nextIndex = currentStepIndex + 1;
       setCurrentStepIndex(nextIndex);
@@ -114,15 +115,15 @@ export const InteractivePlayer: React.FC<InteractivePlayerProps> = ({
       setIsPlaying(false);
       onComplete?.();
     }
-  };
+  }, [currentStepIndex, currentStep.id, isLastStep, onProgress, storybook.steps, onComplete]);
 
-  const handlePreviousStep = () => {
+  const handlePreviousStep = useCallback(() => {
     if (!isFirstStep) {
       const prevIndex = currentStepIndex - 1;
       setCurrentStepIndex(prevIndex);
       onProgress?.(storybook.steps[prevIndex].id, (prevIndex + 1) / storybook.steps.length * 100);
     }
-  };
+  }, [currentStepIndex, isFirstStep, onProgress, storybook.steps]);
 
   const handleStepSelect = (stepIndex: number) => {
     setCurrentStepIndex(stepIndex);
