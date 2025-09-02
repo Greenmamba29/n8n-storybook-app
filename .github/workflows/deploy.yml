@@ -1,0 +1,276 @@
+name: Deploy N8N Interactive Storybook
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ published ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: n8n-storybook-app
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run linting
+      run: npm run lint
+
+    - name: Run type checking
+      run: npm run type-check
+
+    - name: Run tests
+      run: npm run test
+      env:
+        CI: true
+
+    - name: Build application
+      run: npm run build
+
+    - name: Test health endpoint
+      run: |
+        npm start &
+        sleep 10
+        curl -f http://localhost:3000/api/health/ping || exit 1
+        pkill -f "npm start"
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run security audit
+      run: npm audit --audit-level high
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  build-and-push:
+    needs: [test, security-scan]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix=sha-
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Run container security scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        format: 'sarif'
+        output: 'docker-trivy-results.sarif'
+
+  deploy-staging:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Deploy to Vercel Staging
+      uses: amondnet/vercel-action@v25
+      with:
+        vercel-token: ${{ secrets.VERCEL_TOKEN }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+        vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+        working-directory: ./
+
+    - name: Run integration tests
+      run: |
+        npm ci
+        npm run test:integration
+      env:
+        API_BASE_URL: ${{ steps.vercel.outputs.preview-url }}
+
+  deploy-production:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.event_name == 'release'
+    environment: production
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+
+    - name: Configure AWS credentials (if using EKS)
+      uses: aws-actions/configure-aws-credentials@v4
+      if: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-west-2
+
+    - name: Configure Google Cloud credentials (if using GKE)
+      uses: google-github-actions/auth@v2
+      if: ${{ secrets.GCP_SA_KEY }}
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+    - name: Get GKE cluster credentials
+      uses: google-github-actions/get-gke-credentials@v2
+      if: ${{ secrets.GCP_SA_KEY }}
+      with:
+        cluster_name: n8n-storybook-cluster
+        location: us-central1
+
+    - name: Deploy to Kubernetes
+      run: |
+        # Update image tag in deployment
+        sed -i 's|image: n8n-storybook/app:latest|image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}|g' k8s/deployment.yaml
+        
+        # Apply Kubernetes configurations
+        kubectl apply -f k8s/secrets.yaml
+        kubectl apply -f k8s/deployment.yaml
+        
+        # Wait for deployment to complete
+        kubectl rollout status deployment/n8n-storybook-app -n n8n-storybook --timeout=300s
+        
+        # Verify deployment
+        kubectl get pods -n n8n-storybook
+        kubectl get services -n n8n-storybook
+
+    - name: Alternative: Deploy to Vercel Production
+      if: ${{ !secrets.GCP_SA_KEY && !secrets.AWS_ACCESS_KEY_ID }}
+      uses: amondnet/vercel-action@v25
+      with:
+        vercel-token: ${{ secrets.VERCEL_TOKEN }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+        vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+        vercel-args: '--prod'
+        working-directory: ./
+
+    - name: Run production health checks
+      run: |
+        # Wait for deployment to be ready
+        sleep 30
+        
+        # Check health endpoint
+        if [[ "${{ secrets.GCP_SA_KEY }}" || "${{ secrets.AWS_ACCESS_KEY_ID }}" ]]; then
+          # Kubernetes deployment
+          HEALTH_URL="https://n8n-storybook.yourdomain.com/api/health/ping"
+        else
+          # Vercel deployment
+          HEALTH_URL="${{ steps.vercel.outputs.preview-url }}/api/health/ping"
+        fi
+        
+        curl -f $HEALTH_URL || exit 1
+        echo "✅ Production deployment health check passed"
+
+    - name: Run smoke tests
+      run: |
+        npm ci
+        npm run test:smoke
+      env:
+        API_BASE_URL: ${{ steps.vercel.outputs.preview-url || 'https://n8n-storybook.yourdomain.com' }}
+
+    - name: Notify deployment success
+      uses: 8398a7/action-slack@v3
+      if: success()
+      with:
+        status: success
+        channel: '#deployments'
+        text: '🚀 N8N Interactive Storybook successfully deployed to production!'
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+    - name: Notify deployment failure
+      uses: 8398a7/action-slack@v3
+      if: failure()
+      with:
+        status: failure
+        channel: '#deployments'
+        text: '❌ N8N Interactive Storybook deployment to production failed!'
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  cleanup:
+    needs: [deploy-production]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Clean up old container images
+      uses: actions/delete-package-versions@v4
+      with:
+        package-name: ${{ env.IMAGE_NAME }}
+        package-type: 'container'
+        min-versions-to-keep: 5
+        delete-only-untagged-versions: true
