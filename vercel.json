@@ -1,34 +1,12 @@
 {
-  "version": 2,
-  "name": "n8n-interactive-storybook",
-  "builds": [
-    {
-      "src": "package.json",
-      "use": "@vercel/next"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/$1"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/$1"
-    }
-  ],
   "functions": {
-    "src/app/api/*/route.ts": {
+    "app/api/**/route.ts": {
       "maxDuration": 300
     }
   },
   "env": {
     "NODE_ENV": "production"
   },
-  "buildCommand": "npm run build",
-  "devCommand": "npm run dev",
-  "installCommand": "npm ci",
-  "framework": "nextjs",
   "regions": ["cle1"],
   "github": {
     "autoAlias": false
